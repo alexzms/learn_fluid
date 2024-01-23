@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.26)
 project(hello_fluid_simulator)
 project(chapter1)
 project(chapter2)
+project(playground)
 
 set(TARGETS hello_fluid_simulator chapter1 chapter2)
 
@@ -18,9 +19,11 @@ link_directories(E:/ComputerGraphics/libraries/Utilities/lib)
 link_directories(E:/ComputerGraphics/libraries/FluidEngine/lib/jet)
 link_directories(E:/ComputerGraphics/libraries/Visualime/lib)
 
-add_executable(hello_fluid_simulator src/chapter_1_basic.cpp)
+add_executable(hello_fluid_simulator src/chapter1/chapter_1_basic.cpp)
 add_executable(chapter1 src/chapter1/animation_fun.cpp)
 add_executable(chapter2 src/chapter2/particle_based_simulator.cpp)
+add_executable(playground playground.cpp)
+
 
 foreach (target ${TARGETS})
     target_link_libraries(${target} jet.lib visualime.lib opengl32.lib glfw3.lib)
