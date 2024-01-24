@@ -120,7 +120,7 @@ void NaiveSPHSystem3() {
     BoundingBox2D domain(Vector2D(), Vector2D(1, 1));
 
     std::mutex modification_mutex;
-    SphSolver2 solver;
+    PciSphSolver2 solver;
     solver.setPseudoViscosityCoefficient(0.0);
 
     SphSystemData2Ptr particles = solver.sphSystemData();
@@ -153,11 +153,11 @@ void NaiveSPHSystem3() {
     solver.setCollider(collider);
 
     // Make it fast, but stable
-    solver.setViscosityCoefficient(0.3);
-    solver.setTimeStepLimitScale(2.0);
+//    solver.setViscosityCoefficient(0.3);
+    solver.setTimeStepLimitScale(25.0);
 
     Frame frame;
-    double timeIntervalInSeconds = 1.0 / 80.0;
+    double timeIntervalInSeconds = 1.0 / 60.0;
     long long timeIntervalInMilliSeconds = 16;
     frame.timeIntervalInSeconds = timeIntervalInSeconds;
 
@@ -236,59 +236,128 @@ void NaiveSPHSystem3() {
     std::cout << "NaiveSPHSystem3, naived" << std::endl;
 }
 
-void saveParticleDataXy(std::shared_ptr<jet::SphSystemData3> particles, unsigned int index) {
-    std::cout << "saveParticleDataXy " << index << std::endl;
-}
 
-void test() {
+void RotatingTankPCISPH() {
     using namespace jet;
-    const double targetSpacing = 0.2;
+    using namespace visualime;
+    const double targetSpacing = 0.01;
+    std::mutex modification_mutex;
+    // Build solver
+    auto solver = PciSphSolver2::builder()
+            .withTargetSpacing(targetSpacing)
+            .makeShared();
+    SphSystemData2Ptr particles = solver->sphSystemData();
+    solver->setViscosityCoefficient(0.01);
+    solver->setTimeStepLimitScale(30.0);
 
-    BoundingBox3D domain(Vector3D(), Vector3D(1, 2, 0.5));
+    Frame frame;
+    double timeIntervalInSeconds = 1.0 / 60.0;
+    long long timeIntervalInMilliSeconds = 16;
+    frame.timeIntervalInSeconds = timeIntervalInSeconds;
 
-    // Initialize solvers
-    SphSolver3 solver;
-    solver.setPseudoViscosityCoefficient(0.0);
+    // Build emitter
+    auto box = Box2::builder()
+            .withLowerCorner({0.25 + targetSpacing, 0.25 + targetSpacing})
+            .withUpperCorner({0.75 - targetSpacing, 0.50})
+            .makeShared();
 
-    SphSystemData3Ptr particles = solver.sphSystemData();
-    particles->setTargetDensity(1000.0);
-    particles->setTargetSpacing(targetSpacing);
+    auto emitter = VolumeParticleEmitter2::builder()
+            .withSurface(box)
+            .withSpacing(targetSpacing)
+            .withIsOneShot(true)
+            .makeShared();
 
-    // Initialize source
-    ImplicitSurfaceSet3Ptr surfaceSet = std::make_shared<ImplicitSurfaceSet3>();
-    surfaceSet->addExplicitSurface(
-            std::make_shared<Plane3>(
-                    Vector3D(0, 1, 0), Vector3D(0, 0.25 * domain.height(), 0)));
-    surfaceSet->addExplicitSurface(
-            std::make_shared<Sphere3>(
-                    domain.midPoint(), 0.15 * domain.width()));
+    solver->setEmitter(emitter);
 
-    BoundingBox3D sourceBound(domain);
-    sourceBound.expand(-targetSpacing);
+    // Build collider
+    auto tank = Box2::builder()
+            .withLowerCorner({-0.25, -0.25})
+            .withUpperCorner({ 0.25,  0.25})
+            .withTranslation({0.5, 0.5})
+            .withOrientation(0.0)
+            .withIsNormalFlipped(true)
+            .makeShared();
 
-    auto emitter = std::make_shared<VolumeParticleEmitter3>(
-            surfaceSet,
-            sourceBound,
-            targetSpacing,
-            Vector3D());
-    solver.setEmitter(emitter);
+    auto collider = RigidBodyCollider2::builder()
+            .withSurface(tank)
+            .withAngularVelocity(2.0)
+            .makeShared();
 
-    // Initialize boundary
-    Box3Ptr box = std::make_shared<Box3>(domain);
-    box->isNormalFlipped = true;
-    RigidBodyCollider3Ptr collider = std::make_shared<RigidBodyCollider3>(box);
-    solver.setCollider(collider);
+    collider->setOnBeginUpdateCallback([] (Collider2* col, double t, double) {
+        col->surface()->transform.setOrientation(4.0 * t);
+        dynamic_cast<RigidBodyCollider2*>(col)->angularVelocity = 4.0;
+    });
 
-    // Make it fast, but stable
-    solver.setViscosityCoefficient(0.01);
-    solver.setTimeStepLimitScale(5.0);
+    solver->setCollider(collider);
 
-    saveParticleDataXy(particles, 0);
-    int counter = 0;
-    for (Frame frame(0, 1.0 / 60.0); frame.index < 100; frame.advance()) {
-        solver.update(frame);
-        saveParticleDataXy(particles, frame.index);
-        std::cin >> counter;
+    GLsizei width = 1200, height = 1200;
+    scene::scene2d scene{width, height, 1.0, false};
+    std::vector<unsigned> circle_index;
+    std::function<void(const glm::vec2&, double)> add_circle = [&] (const glm::vec2& pos, double r) -> void {
+        modification_mutex.lock();
+        particles->addParticle(
+                {pos.x / width, 1.0f - pos.y / height},
+                Vector2D{}, Vector2D{}
+        );
+        circle_index.emplace_back(
+                scene.add_circle_normalized(
+                        {176, 132, 169},
+                        glm::vec2{pos.x / width, 1.0f - pos.y / height},
+                        0.1, r)
+        );
+        modification_mutex.unlock();
+    };
+    std::function<void(const glm::vec2&)> left_click = [&](const glm::vec2& pos) { add_circle(pos, 0.005); };
+    std::function<void(const glm::vec2&)> right_click = [&](const glm::vec2& pos) { add_circle(pos, 0.03); };
+    scene.on_mouse_left_click = left_click;
+    scene.on_mouse_right_click = right_click;
+    for(auto& pos: particles->positions())
+    {
+        circle_index.emplace_back(
+                scene.add_circle_normalized({176, 132, 169}, glm::vec2{pos.x, pos.y}, 0.1, 0.01)
+        );
+    }
+    scene.launch(true);
+
+    if (!scene.is_running())
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    while (true)
+    {
+        modification_mutex.lock();
+        auto start = std::chrono::system_clock::now();
+        solver->update(frame);
+        auto end = std::chrono::system_clock::now();
+        std::cout << "[info] solver.update(frame) takes "
+                  << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count()
+                  << " milliseconds" << std::endl;
+        // first add the emitted particles in circle_index
+        for (size_t i = circle_index.size(); i < particles->positions().size(); ++i) {
+            auto pos = particles->positions()[i];
+            circle_index.emplace_back(
+                    scene.add_circle_normalized(
+                            {176, 132, 169},
+                            glm::vec2{pos.x / width, 1.0f - pos.y / height},
+                            0.1, 0.005)
+            );
+        }
+        std::cout << "force: " << particles->forces()[0].x << ", " << particles->forces()[0].y << std::endl;
+        for (size_t i = 0; i != circle_index.size(); ++i)
+        {
+            scene.change_primitive_position_normalized(
+                    circle_index[i],
+                    {particles->positions()[i].x, particles->positions()[i].y}
+            );
+            scene.change_primitive_color(circle_index[i],
+                                         mapVelocityToColor(particles->velocities()[i], 1));
+        }
+        scene.refresh();
+        frame.advance();
+        modification_mutex.unlock();
+
+        if (!scene.is_running()) {
+            break;
+        }
     }
 }
 
@@ -296,8 +365,8 @@ void test() {
 int main() {
     jet::Logging::mute();
 //    FirstSightOnParticleSystemSolver3();
-    NaiveSPHSystem3();
-//    test();
+//    NaiveSPHSystem3();
+    RotatingTankPCISPH();
     return 0;
 }
 
